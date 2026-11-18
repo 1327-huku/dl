@@ -17,7 +17,7 @@ jobs:
       - name: Download MP3
         run: |
           mkdir output
-          yt-dlp -x --audio-format mp3 -o "output/%(title)s.%(ext)s" "${{ github.event.inputs.url }}"
+          yt-dlp --extractor-args "youtube:player_client=android" -x --audio-format mp3 -o "output/%(title)s.%(ext)s" "${{ github.event.inputs.url }}"
 
       - name: Upload MP3
         uses: actions/upload-artifact@v4
