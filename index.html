@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>動画からMP3を保存</title>
+<script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
+<style>
+  :root {
+    --bg: #f4f7fb;
+    --card: #ffffff;
+    --primary: #0066ff;
+    --accent: #ff6b00;
+    --text: #1e293b;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    margin: 0;
+    padding: 16px;
+    box-sizing: border-box;
+  }
+  .container {
+    background: var(--card);
+    padding: 24px;
+    border-radius: 16px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    width: 100%;
+    max-width: 400px;
+    text-align: center;
+  }
+  h1 { font-size: 1.25rem; margin-bottom: 16px; }
+  input[type="file"] { display: none; }
+  .btn {
+    display: block;
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+    box-sizing: border-box;
+    text-decoration: none;
+    margin-top: 12px;
+  }
+  .btn-select { background: var(--primary); color: #fff; }
+  .btn-download { background: var(--accent); color: #fff; display: none; }
+  #status { margin-top: 16px; font-size: 0.9rem; color: #475569; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>動画からMP3を抽出</h1>
+  <label class="btn btn-select">
+    動画ファイルを選択
+    <input type="file" id="videoInput" accept="video/*">
+  </label>
+  <div id="status">YouTube Studioで保存した動画を選んでください</div>
+  <a id="downloadLink" class="btn btn-download">MP3ファイルを保存</a>
+</div>
+
+<script>
+const videoInput = document.getElementById('videoInput');
+const status = document.getElementById('status');
+const downloadLink = document.getElementById('downloadLink');
+
+videoInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  status.textContent = '音声を読み込んでMP3に変換中...（動画の長さによって数秒〜数十秒かかります）';
+  downloadLink.style.display = 'none';
+
+  // 画面の表示を更新させるために少し待機
+  await new Promise(resolve => setTimeout(resolve, 50));
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+    const mp3Blob = audioBufferToMp3(audioBuffer);
+    const url = URL.createObjectURL(mp3Blob);
+
+    const baseName = file.name.replace(/\.[^/.]+$/, "");
+    downloadLink.href = url;
+    downloadLink.download = `${baseName}.mp3`;
+    downloadLink.style.display = 'block';
+    status.textContent = '変換が完了しました！下のボタンからMP3を保存できます。';
+  } catch (err) {
+    status.textContent = 'エラー: 音声の変換に失敗しました。';
+    console.error(err);
+  }
+});
+
+function audioBufferToMp3(buffer) {
+  const numChannels = Math.min(buffer.numberOfChannels, 2);
+  const sampleRate = buffer.sampleRate;
+  const mp3encoder = new lamejs.Mp3Encoder(numChannels, sampleRate, 192); // 192kbpsの高音質MP3
+  const mp3Data = [];
+
+  const leftFloat = buffer.getChannelData(0);
+  const rightFloat = numChannels > 1 ? buffer.getChannelData(1) : leftFloat;
+
+  const left = new Int16Array(leftFloat.length);
+  const right = new Int16Array(rightFloat.length);
+
+  for (let i = 0; i < leftFloat.length; i++) {
+    let l = Math.max(-1, Math.min(1, leftFloat[i]));
+    left[i] = l < 0 ? l * 0x8000 : l * 0x7FFF;
+
+    if (numChannels > 1) {
+      let r = Math.max(-1, Math.min(1, rightFloat[i]));
+      right[i] = r < 0 ? r * 0x8000 : r * 0x7FFF;
+    }
+  }
+
+  const sampleBlockSize = 1152;
+  for (let i = 0; i < left.length; i += sampleBlockSize) {
+    const leftChunk = left.subarray(i, i + sampleBlockSize);
+    let mp3buf;
+    if (numChannels === 1) {
+      mp3buf = mp3encoder.encodeBuffer(leftChunk);
+    } else {
+      const rightChunk = right.subarray(i, i + sampleBlockSize);
+      mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+    }
+    if (mp3buf.length > 0) mp3Data.push(mp3buf);
+  }
+
+  const mp3buf = mp3encoder.flush();
+  if (mp3buf.length > 0) mp3Data.push(mp3buf);
+
+  return new Blob(mp3Data, { type: 'audio/mp3' });
+}
+</script>
+</body>
+</html>
+
