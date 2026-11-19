@@ -1,1 +1,27 @@
+name: YouTube MP3 Downloader
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: '自分のYouTube動画のURL'
+        required: true
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install yt-dlp
+        run: pip install -U yt-dlp
+
+      - name: Download MP3
+        run: |
+          mkdir output
+          yt-dlp --extractor-args "youtube:player_client=android,web" -x --audio-format mp3 -o "output/%(title)s.%(ext)s" "${{ github.event.inputs.url }}"
+
+      - name: Upload MP3
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-mp3
+          path: output/*.mp3
 
