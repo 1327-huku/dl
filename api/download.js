@@ -1,9 +1,9 @@
-const ytdl = require('@distube/ytdl-core');
+import ytdl from '@distube/ytdl-core';
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   const { url } = req.query;
-  if (!url || !ytdl.validateURL(url)) {
-    return res.status(400).send('有効なYouTubeのURLを入力してください');
+  if (!url) {
+    return res.status(400).send('URLが指定されていません');
   }
 
   try {
@@ -15,6 +15,6 @@ module.exports = async (req, res) => {
 
     ytdl(url, { quality: 'highestaudio', filter: 'audioonly' }).pipe(res);
   } catch (err) {
-    res.status(500).send('取得エラー: ' + err.message);
+    res.status(500).send('詳細エラー: ' + err.message);
   }
-};
+}
