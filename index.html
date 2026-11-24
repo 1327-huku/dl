@@ -1,28 +1,1695 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" class="dark">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>YouTube 音声保存</title>
-<style>
-  body { font-family: -apple-system, sans-serif; background: #f4f7fb; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 16px; }
-  .box { background: #fff; padding: 24px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); width: 100%; max-width: 400px; text-align: center; }
-  input { width: 100%; padding: 12px; margin: 12px 0; border: 1px solid #cbd5e1; border-radius: 8px; box-sizing: border-box; font-size: 1rem; }
-  button { width: 100%; padding: 14px; background: #0066ff; color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SilentCrop Recorder — 完全無音・範囲指定 画面録画ツール</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter & Noto Sans JP -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Inter"', '"Noto Sans JP"', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+          },
+          colors: {
+            studio: {
+              bg: '#0f1117',
+              panel: '#181b24',
+              panelHover: '#1f2330',
+              border: '#2a2f3d',
+              accent: '#10b981',
+              accentDark: '#059669',
+              rec: '#ef4444',
+              recDark: '#dc2626',
+            }
+          }
+        }
+      }
+    };
+  </script>
+
+  <style>
+    /* ベーススタイル & スクロールバー */
+    body {
+      background-color: #0f1117;
+      color: #f1f5f9;
+      font-family: "Inter", "Noto Sans JP", sans-serif;
+      overflow-x: hidden;
+    }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f1117;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #2a2f3d;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #3b4256;
+    }
+
+    /* 範囲指定（クロップ）オーバーレイの暗転バックドロップ */
+    .crop-box {
+      position: absolute;
+      box-shadow: 0 0 0 9999px rgba(9, 11, 16, 0.74);
+      border: 2px solid #10b981;
+      cursor: move;
+      touch-action: none;
+      user-select: none;
+      transition: border-color 0.2s ease;
+    }
+
+    .crop-box.is-recording {
+      border-color: #ef4444;
+      box-shadow: 0 0 0 9999px rgba(9, 11, 16, 0.80);
+    }
+
+    /* 三分割法ガイド線（ドラッグ中のみ強調） */
+    .crop-grid {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.22;
+      background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.5) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.5) 1px, transparent 1px);
+      background-size: 33.333% 33.333%;
+      transition: opacity 0.15s ease;
+    }
+    .crop-box.is-interacting .crop-grid {
+      opacity: 0.55;
+    }
+
+    /* 8方向リサイズハンドル */
+    .resize-handle {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      background-color: #10b981;
+      border: 2px solid #0f1117;
+      border-radius: 9999px;
+      z-index: 20;
+      touch-action: none;
+      transition: transform 0.12s ease, background-color 0.15s ease;
+    }
+    .resize-handle:hover,
+    .resize-handle:active {
+      transform: scale(1.25);
+      background-color: #34d399;
+    }
+
+    .crop-box.is-recording .resize-handle {
+      display: none;
+    }
+
+    /* 各ハンドルの配置とカーソル */
+    .handle-nw { top: -7px; left: -7px; cursor: nwse-resize; }
+    .handle-n  { top: -7px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+    .handle-ne { top: -7px; right: -7px; cursor: nesw-resize; }
+    .handle-e  { top: 50%; right: -7px; transform: translateY(-50%); cursor: ew-resize; }
+    .handle-se { bottom: -7px; right: -7px; cursor: nwse-resize; }
+    .handle-s  { bottom: -7px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+    .handle-sw { bottom: -7px; left: -7px; cursor: nesw-resize; }
+    .handle-w  { top: 50%; left: -7px; transform: translateY(-50%); cursor: ew-resize; }
+
+    .handle-n:hover, .handle-s:hover { transform: translateX(-50%) scale(1.25); }
+    .handle-e:hover, .handle-w:hover { transform: translateY(-50%) scale(1.25); }
+
+    /* 録画中のパルスアニメーション */
+    @keyframes pulseRec {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.45; transform: scale(0.92); }
+    }
+    .animate-rec-dot {
+      animation: pulseRec 1.2s infinite ease-in-out;
+    }
+
+    /* トースト通知アニメーション */
+    @keyframes slideUpFade {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .toast-enter {
+      animation: slideUpFade 0.22s ease-out forwards;
+    }
+  </style>
 </head>
-<body>
-<div class="box">
-  <h2>YouTube 音声ダウンローダー</h2>
-  <input type="url" id="url" placeholder="https://youtu.be/...">
-  <button onclick="download()">音声を保存</button>
-</div>
-<script>
-function download() {
-  const url = document.getElementById('url').value.trim();
-  if (!url) return alert('URLを入力してください');
-  window.location.href = `/api/download?url=${encodeURIComponent(url)}`;
-}
-</script>
+<body class="min-h-screen flex flex-col selection:bg-emerald-500/30 selection:text-emerald-200">
+
+  <!-- トップヘッダー -->
+  <header class="sticky top-0 z-40 bg-[#0f1117]/90 backdrop-blur-md border-b border-[#2a2f3d]">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3.5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+      <!-- 左側: タイトル & 完全無音バッジ -->
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="flex items-center gap-2.5">
+          <!-- アプリアイコン (SVG) -->
+          <div class="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-inner">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 2v14a2 2 0 002 2h14M18 22V8a2 2 0 00-2-2H2" />
+            </svg>
+          </div>
+          <div>
+            <h1 class="text-base sm:text-lg font-bold tracking-tight text-white leading-tight">
+              SilentCrop Recorder
+            </h1>
+            <p class="text-xs text-slate-400">完全無音・範囲指定 画面録画ツール</p>
+          </div>
+        </div>
+
+        <!-- 完全無音バッジ -->
+        <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold shadow-sm">
+          <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+          </svg>
+          <span>完全無音モード (音声トラック0)</span>
+        </div>
+      </div>
+
+      <!-- 右側: 3ステップインジケーター -->
+      <nav aria-label="操作ステップ" class="flex items-center flex-wrap gap-1.5 sm:gap-2 text-xs">
+        <span id="stepBadge1" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/40 font-medium transition-colors">
+          <span class="w-4 h-4 rounded-full bg-emerald-500 text-slate-950 font-bold flex items-center justify-center text-[10px]">1</span>
+          画面選択
+        </span>
+        <span class="text-slate-600">→</span>
+        <span id="stepBadge2" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#181b24] text-slate-400 border border-[#2a2f3d] font-medium transition-colors">
+          <span class="w-4 h-4 rounded-full bg-slate-700 text-slate-300 font-bold flex items-center justify-center text-[10px]">2</span>
+          範囲をドラッグ指定
+        </span>
+        <span class="text-slate-600">→</span>
+        <span id="stepBadge3" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#181b24] text-slate-400 border border-[#2a2f3d] font-medium transition-colors">
+          <span class="w-4 h-4 rounded-full bg-slate-700 text-slate-300 font-bold flex items-center justify-center text-[10px]">3</span>
+          無音録画＆保存
+        </span>
+      </nav>
+    </div>
+  </header>
+
+  <!-- メインコンテンツ -->
+  <main class="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+    <!-- エラー・案内メッセージボックス（非表示スタート） -->
+    <div id="alertBanner" class="hidden rounded-2xl bg-amber-500/10 border border-amber-500/30 p-4 text-sm text-amber-200 flex items-start gap-3">
+      <svg class="w-5 h-5 text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+      </svg>
+      <div class="flex-1 space-y-2">
+        <p id="alertTitle" class="font-semibold text-amber-300">画面共有を開始できませんでした</p>
+        <p id="alertBody" class="text-xs sm:text-sm text-amber-100/90 leading-relaxed"></p>
+        <div class="pt-1 flex flex-wrap gap-2">
+          <button id="btnDemoFallback" type="button" class="px-3.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 text-xs font-semibold transition">
+            🎮 デモ用ゲーム映像で範囲指定・無音録画を試す
+          </button>
+          <button id="btnDismissAlert" type="button" class="px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 text-xs transition">
+            閉じる
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- スタジオパネル: プレビュー & 範囲指定 -->
+    <section class="rounded-2xl bg-[#181b24] border border-[#2a2f3d] shadow-xl overflow-hidden">
+      <!-- パネル上部ツールバー -->
+      <div class="px-4 sm:px-5 py-3.5 border-b border-[#2a2f3d] flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <!-- 画面選択アクション -->
+        <div class="flex flex-wrap items-center gap-2.5">
+          <button id="btnSelectScreen" type="button" class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.99] text-slate-950 font-bold text-sm shadow-lg shadow-emerald-500/20 transition cursor-pointer">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2.3" viewBox="0 0 24 24">
+              <rect x="2" y="3" width="20" height="14" rx="2" />
+              <path stroke-linecap="round" d="M8 21h8M12 17v4" />
+            </svg>
+            <span id="btnSelectScreenLabel">① 録画する画面・ゲームウィンドウを選択</span>
+          </button>
+
+          <button id="btnStopShare" type="button" class="hidden inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#222634] hover:bg-[#2b3042] border border-[#2a2f3d] text-slate-300 text-xs font-medium transition cursor-pointer">
+            <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            共有終了
+          </button>
+        </div>
+
+        <!-- リアルタイム解像度インジケーター -->
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <div class="px-3 py-1.5 rounded-xl bg-[#0f1117] border border-[#2a2f3d] flex items-center gap-2">
+            <span class="text-slate-400">出力サイズ:</span>
+            <span id="outputResBadge" class="font-mono font-bold text-emerald-400">--- × --- px</span>
+          </div>
+          <div id="sourceResContainer" class="hidden px-3 py-1.5 rounded-xl bg-[#0f1117] border border-[#2a2f3d] items-center gap-1.5 text-slate-400">
+            <span>元画面:</span>
+            <span id="sourceResText" class="font-mono text-slate-300">0 × 0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- アスペクト比プリセットバー（画面共有中に有効化） -->
+      <div id="aspectToolbar" class="px-4 sm:px-5 py-2.5 bg-[#13161e] border-b border-[#2a2f3d] flex flex-wrap items-center justify-between gap-2 opacity-50 pointer-events-none transition-opacity">
+        <div class="flex flex-wrap items-center gap-1.5">
+          <span class="text-xs text-slate-400 mr-1 font-medium">比率プリセット:</span>
+          <button type="button" data-ratio="free" class="ratio-btn active px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 transition cursor-pointer">
+            自由 (Free)
+          </button>
+          <button type="button" data-ratio="16:9" class="ratio-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-[#181b24] hover:bg-[#222634] text-slate-300 border border-[#2a2f3d] transition cursor-pointer">
+            16:9
+          </button>
+          <button type="button" data-ratio="9:16" class="ratio-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-[#181b24] hover:bg-[#222634] text-slate-300 border border-[#2a2f3d] transition cursor-pointer">
+            9:16 (ショート動画)
+          </button>
+          <button type="button" data-ratio="4:3" class="ratio-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-[#181b24] hover:bg-[#222634] text-slate-300 border border-[#2a2f3d] transition cursor-pointer">
+            4:3
+          </button>
+          <button type="button" data-ratio="1:1" class="ratio-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-[#181b24] hover:bg-[#222634] text-slate-300 border border-[#2a2f3d] transition cursor-pointer">
+            1:1
+          </button>
+        </div>
+
+        <button id="btnResetCrop" type="button" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-[#181b24] hover:bg-[#222634] text-slate-300 border border-[#2a2f3d] transition cursor-pointer">
+          <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+          </svg>
+          全体に戻す
+        </button>
+      </div>
+
+      <!-- プレビューステージ -->
+      <div id="stageContainer" class="relative w-full min-h-[300px] sm:min-h-[400px] max-h-[64vh] bg-[#0a0c10] flex items-center justify-center p-3 sm:p-5 select-none overflow-hidden">
+        
+        <!-- 未選択時のプレースホルダー -->
+        <div id="emptyState" class="text-center max-w-md mx-auto py-8 px-4 space-y-4">
+          <div class="w-16 h-16 mx-auto rounded-2xl bg-[#181b24] border border-[#2a2f3d] flex items-center justify-center text-emerald-400 shadow-inner">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <div class="space-y-1.5">
+            <h2 class="text-base sm:text-lg font-bold text-slate-100">録画したいゲーム画面を選択してください</h2>
+            <p class="text-xs sm:text-sm text-slate-400 leading-relaxed">
+              上の緑色のボタンを押してウィンドウや画面を選ぶと、ここにリアルタイム映像が表示されます。<br />
+              音声は最初から一切取得しないため、完全無音で録画できます。
+            </p>
+          </div>
+          <div class="pt-1">
+            <button id="btnDemoQuickStart" type="button" class="text-xs text-slate-400 hover:text-emerald-400 underline underline-offset-4 transition cursor-pointer">
+              またはデモ用サンプル画面で範囲指定を試す
+            </button>
+          </div>
+        </div>
+
+        <!-- 映像＆クロップ操作ラッパー（映像の実表示サイズにぴったり一致させる） -->
+        <div id="mediaWrapper" class="hidden relative overflow-hidden rounded-lg shadow-2xl ring-1 ring-white/10 cursor-crosshair">
+          <video id="previewVideo" autoplay muted playsinline class="block w-full h-full object-fill pointer-events-none"></video>
+
+          <!-- インタラクティブ範囲指定ボックス -->
+          <div id="cropBox" class="crop-box" style="left: 15%; top: 15%; width: 70%; height: 70%;">
+            <div class="crop-grid"></div>
+            <!-- 左上バッジ -->
+            <div id="cropTag" class="absolute -top-6 left-0 px-2 py-0.5 rounded-t-md bg-emerald-500 text-slate-950 font-mono text-[11px] font-bold whitespace-nowrap pointer-events-none shadow">
+              録画範囲
+            </div>
+
+            <!-- 8方向リサイズハンドル -->
+            <div class="resize-handle handle-nw" data-handle="nw" title="左上をリサイズ"></div>
+            <div class="resize-handle handle-n"  data-handle="n"  title="上辺をリサイズ"></div>
+            <div class="resize-handle handle-ne" data-handle="ne" title="右上をリサイズ"></div>
+            <div class="resize-handle handle-e"  data-handle="e"  title="右辺をリサイズ"></div>
+            <div class="resize-handle handle-se" data-handle="se" title="右下をリサイズ"></div>
+            <div class="resize-handle handle-s"  data-handle="s"  title="下辺をリサイズ"></div>
+            <div class="resize-handle handle-sw" data-handle="sw" title="左下をリサイズ"></div>
+            <div class="resize-handle handle-w"  data-handle="w"  title="左辺をリサイズ"></div>
+          </div>
+
+          <!-- 無音カウントダウンオーバーレイ -->
+          <div id="countdownOverlay" class="hidden absolute inset-0 z-30 bg-slate-950/70 backdrop-blur-xs flex flex-col items-center justify-center gap-3">
+            <div class="text-xs font-semibold uppercase tracking-widest text-emerald-400">無音録画開始まで</div>
+            <div id="countdownNumber" class="text-6xl sm:text-7xl font-black text-white font-mono drop-shadow-lg">3</div>
+            <button id="btnCancelCountdown" type="button" class="mt-2 px-4 py-1.5 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs text-slate-200 transition cursor-pointer">
+              キャンセル
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 録画コントロールバー -->
+      <div class="px-4 sm:px-5 py-4 bg-[#141720] border-t border-[#2a2f3d] flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        
+        <!-- 設定オプション群 -->
+        <div class="flex flex-wrap items-center gap-3 sm:gap-4">
+          <!-- FPS選択 -->
+          <div class="flex items-center gap-2">
+            <label for="selectFps" class="text-xs font-medium text-slate-400">フレームレート:</label>
+            <select id="selectFps" class="px-3 py-1.5 rounded-xl bg-[#181b24] border border-[#2a2f3d] text-xs sm:text-sm text-slate-200 font-medium focus:outline-none focus:border-emerald-500 cursor-pointer">
+              <option value="60" selected>60 FPS (なめらか)</option>
+              <option value="30">30 FPS (軽量)</option>
+            </select>
+          </div>
+
+          <!-- カウントダウン設定 -->
+          <div class="flex items-center gap-2">
+            <label for="selectCountdown" class="text-xs font-medium text-slate-400">開始タイマー:</label>
+            <select id="selectCountdown" class="px-3 py-1.5 rounded-xl bg-[#181b24] border border-[#2a2f3d] text-xs sm:text-sm text-slate-200 font-medium focus:outline-none focus:border-emerald-500 cursor-pointer">
+              <option value="0" selected>なし (即開始)</option>
+              <option value="3">3秒 (無音カウント)</option>
+            </select>
+          </div>
+
+          <!-- 画質選択 -->
+          <div class="flex items-center gap-2">
+            <label for="selectQuality" class="text-xs font-medium text-slate-400">画質:</label>
+            <select id="selectQuality" class="px-3 py-1.5 rounded-xl bg-[#181b24] border border-[#2a2f3d] text-xs sm:text-sm text-slate-200 font-medium focus:outline-none focus:border-emerald-500 cursor-pointer">
+              <option value="high" selected>高画質 (10 Mbps)</option>
+              <option value="standard">標準 (4.5 Mbps)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 録画実行ボタン＆ステータス -->
+        <div class="flex flex-wrap items-center gap-3">
+          <!-- 録画中ステータスバッジ -->
+          <div id="recordingStatusPill" class="hidden items-center gap-2.5 px-3.5 py-2 rounded-xl bg-red-500/15 border border-red-500/40 text-red-300">
+            <span id="recDot" class="w-2.5 h-2.5 rounded-full bg-red-500 animate-rec-dot"></span>
+            <span id="recStateLabel" class="text-xs font-bold">無音録画中</span>
+            <span id="recTimer" class="font-mono text-sm font-bold text-white">00:00</span>
+          </div>
+
+          <!-- 録画開始ボタン -->
+          <button id="btnStartRec" type="button" disabled class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-white font-bold text-sm shadow-lg shadow-red-600/20 disabled:shadow-none transition cursor-pointer">
+            <span class="w-2.5 h-2.5 rounded-full bg-white"></span>
+            <span>● 無音録画を開始</span>
+          </button>
+
+          <!-- 一時停止 / 再開ボタン -->
+          <button id="btnPauseRec" type="button" class="hidden inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#222634] hover:bg-[#2b3042] border border-[#2a2f3d] text-slate-200 font-semibold text-sm transition cursor-pointer">
+            <span id="btnPauseIcon">❚❚</span>
+            <span id="btnPauseText">一時停止</span>
+          </button>
+
+          <!-- 録画停止ボタン -->
+          <button id="btnStopRec" type="button" class="hidden inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm shadow-lg shadow-emerald-500/20 transition cursor-pointer">
+            <span>■ 録画停止</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 録画済みクリップ ギャラリー -->
+    <section class="rounded-2xl bg-[#181b24] border border-[#2a2f3d] shadow-xl overflow-hidden">
+      <div class="px-4 sm:px-5 py-3.5 border-b border-[#2a2f3d] flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <h2 class="text-sm sm:text-base font-bold text-white">録画済みクリップ</h2>
+          <span id="clipCountBadge" class="px-2 py-0.5 rounded-full bg-[#0f1117] border border-[#2a2f3d] text-xs font-mono text-slate-300">0</span>
+        </div>
+        <span id="formatSupportLabel" class="text-xs text-slate-400 font-mono"></span>
+      </div>
+
+      <!-- クリップ空状態 -->
+      <div id="clipsEmptyState" class="p-8 text-center text-xs sm:text-sm text-slate-400">
+        録画を停止すると、ここに完全無音の動画プレビューとダウンロードボタンが表示されます。
+      </div>
+
+      <!-- クリップ一覧グリッド -->
+      <div id="clipsGrid" class="hidden p-4 sm:p-5 grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+    </section>
+
+  </main>
+
+  <!-- コンパクトなヒントフッター -->
+  <footer class="max-w-6xl w-full mx-auto px-4 sm:px-6 pb-8">
+    <div class="rounded-2xl bg-[#181b24]/70 border border-[#2a2f3d] px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-400">
+      <div class="flex items-start sm:items-center gap-2">
+        <span class="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 font-semibold shrink-0">TIP</span>
+        <span>
+          PCゲームを録画する際は、ゲーム側の画面設定を<strong class="text-slate-200 font-semibold">「ボーダーレスウィンドウ（仮想フルスクリーン）」</strong>にすると、ウィンドウ選択や切り替えがスムーズに行えます。
+        </span>
+      </div>
+      <div class="text-slate-500 shrink-0">
+        音声トラック: 0ch (完全無音出力保証)
+      </div>
+    </div>
+  </footer>
+
+  <!-- オフスクリーン処理用要素 -->
+  <canvas id="recordCanvas" class="hidden"></canvas>
+  <canvas id="demoSourceCanvas" width="1280" height="720" class="hidden"></canvas>
+
+  <!-- トースト通知コンテナ -->
+  <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+  <script>
+    /**
+     * SilentCrop Recorder — 完全無音・範囲指定 画面録画ツール
+     * すべての映像フレームをオフスクリーンCanvas経由でエンコードし、
+     * 音声トラックを0本に保つことで完全無音録画と無音UIを実現します。
+     */
+    (() => {
+      // ==========================================
+      // 1. DOM要素の参照
+      // ==========================================
+      const btnSelectScreen = document.getElementById('btnSelectScreen');
+      const btnSelectScreenLabel = document.getElementById('btnSelectScreenLabel');
+      const btnStopShare = document.getElementById('btnStopShare');
+      const btnDemoQuickStart = document.getElementById('btnDemoQuickStart');
+      const btnDemoFallback = document.getElementById('btnDemoFallback');
+      const btnDismissAlert = document.getElementById('btnDismissAlert');
+
+      const alertBanner = document.getElementById('alertBanner');
+      const alertTitle = document.getElementById('alertTitle');
+      const alertBody = document.getElementById('alertBody');
+
+      const stepBadge1 = document.getElementById('stepBadge1');
+      const stepBadge2 = document.getElementById('stepBadge2');
+      const stepBadge3 = document.getElementById('stepBadge3');
+
+      const aspectToolbar = document.getElementById('aspectToolbar');
+      const ratioButtons = document.querySelectorAll('.ratio-btn');
+      const btnResetCrop = document.getElementById('btnResetCrop');
+
+      const stageContainer = document.getElementById('stageContainer');
+      const emptyState = document.getElementById('emptyState');
+      const mediaWrapper = document.getElementById('mediaWrapper');
+      const previewVideo = document.getElementById('previewVideo');
+      const cropBox = document.getElementById('cropBox');
+      const cropTag = document.getElementById('cropTag');
+
+      const outputResBadge = document.getElementById('outputResBadge');
+      const sourceResContainer = document.getElementById('sourceResContainer');
+      const sourceResText = document.getElementById('sourceResText');
+
+      const countdownOverlay = document.getElementById('countdownOverlay');
+      const countdownNumber = document.getElementById('countdownNumber');
+      const btnCancelCountdown = document.getElementById('btnCancelCountdown');
+
+      const selectFps = document.getElementById('selectFps');
+      const selectCountdown = document.getElementById('selectCountdown');
+      const selectQuality = document.getElementById('selectQuality');
+
+      const recordingStatusPill = document.getElementById('recordingStatusPill');
+      const recDot = document.getElementById('recDot');
+      const recStateLabel = document.getElementById('recStateLabel');
+      const recTimer = document.getElementById('recTimer');
+
+      const btnStartRec = document.getElementById('btnStartRec');
+      const btnPauseRec = document.getElementById('btnPauseRec');
+      const btnPauseIcon = document.getElementById('btnPauseIcon');
+      const btnPauseText = document.getElementById('btnPauseText');
+      const btnStopRec = document.getElementById('btnStopRec');
+
+      const clipsEmptyState = document.getElementById('clipsEmptyState');
+      const clipsGrid = document.getElementById('clipsGrid');
+      const clipCountBadge = document.getElementById('clipCountBadge');
+      const formatSupportLabel = document.getElementById('formatSupportLabel');
+
+      const recordCanvas = document.getElementById('recordCanvas');
+      const recordCtx = recordCanvas.getContext('2d', { alpha: false });
+      const demoSourceCanvas = document.getElementById('demoSourceCanvas');
+      const toastContainer = document.getElementById('toastContainer');
+
+      // ==========================================
+      // 2. アプリケーション状態管理
+      // ==========================================
+      const state = {
+        mediaStream: null,
+        isDemoMode: false,
+        demoAnimId: null,
+
+        // 正規化されたクロップ領域 [0.0 ~ 1.0]
+        crop: { x: 0.15, y: 0.15, w: 0.70, h: 0.70 },
+        aspectRatio: 'free', // 'free' | '16:9' | '9:16' | '4:3' | '1:1'
+
+        // 録画状態
+        isRecording: false,
+        isPaused: false,
+        countdownTimerId: null,
+        mediaRecorder: null,
+        recordedChunks: [],
+        drawLoopId: null,
+        fallbackIntervalId: null,
+        lockedOutW: 0,
+        lockedOutH: 0,
+
+        // 経過時間計測
+        recStartTime: 0,
+        recAccumulatedMs: 0,
+        timerIntervalId: null,
+
+        // 保存済みクリップ一覧
+        clips: [],
+      };
+
+      // ==========================================
+      // 3. ユーティリティ関数
+      // ==========================================
+
+      /**
+       * トースト通知を表示（alert()の代替）
+       */
+      function showToast(message, type = 'info') {
+        const el = document.createElement('div');
+        const styles = {
+          info: 'bg-[#181b24] border-[#2a2f3d] text-slate-200',
+          success: 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200',
+          danger: 'bg-red-950/90 border-red-500/40 text-red-200',
+        };
+        el.className = `toast-enter pointer-events-auto px-4 py-2.5 rounded-xl border shadow-xl text-xs sm:text-sm font-medium flex items-center gap-2 ${styles[type] || styles.info}`;
+        el.textContent = message;
+        toastContainer.appendChild(el);
+        setTimeout(() => {
+          el.style.opacity = '0';
+          el.style.transition = 'opacity 0.25s ease';
+          setTimeout(() => el.remove(), 260);
+        }, 3200);
+      }
+
+      /**
+       * エラーバナー表示
+       */
+      function showAlert(title, body) {
+        alertTitle.textContent = title;
+        alertBody.textContent = body;
+        alertBanner.classList.remove('hidden');
+      }
+
+      function hideAlert() {
+        alertBanner.classList.add('hidden');
+      }
+
+      /**
+       * ステップインジケーターのハイライト更新
+       */
+      function updateStepIndicator(step) {
+        const activeClass = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/40 font-medium transition-colors';
+        const inactiveClass = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#181b24] text-slate-400 border border-[#2a2f3d] font-medium transition-colors';
+        const activeNum = 'w-4 h-4 rounded-full bg-emerald-500 text-slate-950 font-bold flex items-center justify-center text-[10px]';
+        const inactiveNum = 'w-4 h-4 rounded-full bg-slate-700 text-slate-300 font-bold flex items-center justify-center text-[10px]';
+
+        [stepBadge1, stepBadge2, stepBadge3].forEach((badge, idx) => {
+          const isCurrent = (idx + 1) === step;
+          badge.className = isCurrent ? activeClass : inactiveClass;
+          badge.firstElementChild.className = isCurrent ? activeNum : inactiveNum;
+        });
+      }
+
+      /**
+       * ブラウザが対応する最適な無音動画MIMEタイプを検出
+       */
+      function detectBestMimeType() {
+        const candidates = [
+          { mime: 'video/mp4;codecs=avc1.42E01E', ext: 'mp4', label: 'MP4 (H.264)' },
+          { mime: 'video/mp4;codecs=avc1', ext: 'mp4', label: 'MP4 (H.264)' },
+          { mime: 'video/mp4', ext: 'mp4', label: 'MP4' },
+          { mime: 'video/webm;codecs=vp9', ext: 'webm', label: 'WebM (VP9)' },
+          { mime: 'video/webm;codecs=vp8', ext: 'webm', label: 'WebM (VP8)' },
+          { mime: 'video/webm', ext: 'webm', label: 'WebM' },
+        ];
+
+        if (typeof MediaRecorder === 'undefined') {
+          return { mime: '', ext: 'webm', label: '非対応' };
+        }
+
+        for (const item of candidates) {
+          if (MediaRecorder.isTypeSupported(item.mime)) {
+            return item;
+          }
+        }
+        return { mime: '', ext: 'webm', label: 'WebM (標準)' };
+      }
+
+      const bestFormat = detectBestMimeType();
+      formatSupportLabel.textContent = `出力形式: ${bestFormat.label} / 音声: なし`;
+
+      /**
+       * 秒数を MM:SS 形式にフォーマット
+       */
+      function formatDuration(totalSeconds) {
+        const sec = Math.max(0, Math.floor(totalSeconds));
+        const m = String(Math.floor(sec / 60)).padStart(2, '0');
+        const s = String(sec % 60).padStart(2, '0');
+        return `${m}:${s}`;
+      }
+
+      /**
+       * バイト数を読みやすいファイルサイズ表記に変換
+       */
+      function formatBytes(bytes) {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+      }
+
+      /**
+       * タイムスタンプ付きファイル名を生成
+       */
+      function generateTimestampFilename(ext) {
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const datePart = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+        const timePart = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+        return `silent_clip_${datePart}_${timePart}.${ext}`;
+      }
+
+      // ==========================================
+      // 4. 画面キャプチャ & ストリーム管理 (完全無音)
+      // ==========================================
+
+      /**
+       * 現在のストリームを安全に停止・クリーンアップ
+       */
+      function stopCurrentStream() {
+        if (state.isRecording) {
+          stopRecording();
+        }
+        cancelCountdown();
+
+        if (state.demoAnimId) {
+          cancelAnimationFrame(state.demoAnimId);
+          state.demoAnimId = null;
+        }
+        state.isDemoMode = false;
+
+        if (state.mediaStream) {
+          state.mediaStream.getTracks().forEach((track) => {
+            track.onended = null;
+            track.stop();
+          });
+          state.mediaStream = null;
+        }
+
+        previewVideo.srcObject = null;
+        mediaWrapper.classList.add('hidden');
+        emptyState.classList.remove('hidden');
+        btnStopShare.classList.add('hidden');
+        sourceResContainer.classList.add('hidden');
+        sourceResContainer.classList.remove('flex');
+        aspectToolbar.classList.add('opacity-50', 'pointer-events-none');
+        btnStartRec.disabled = true;
+        outputResBadge.textContent = '--- × --- px';
+        btnSelectScreenLabel.textContent = '① 録画する画面・ゲームウィンドウを選択';
+        updateStepIndicator(1);
+      }
+
+      /**
+       * ストリームをプレビューに接続しUIを有効化
+       */
+      async function attachStreamToPreview(stream, isDemo = false) {
+        // 万が一音声トラックが含まれていても即座に破棄（完全無音保証）
+        stream.getAudioTracks().forEach((track) => {
+          track.stop();
+          stream.removeTrack(track);
+        });
+
+        state.mediaStream = stream;
+        state.isDemoMode = isDemo;
+
+        // ユーザーがブラウザ側の「共有を停止」を押した場合のハンドリング
+        const videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack) {
+          videoTrack.onended = () => {
+            if (state.isRecording) {
+              stopRecording();
+              showToast('画面共有が終了したため、録画を自動保存しました', 'info');
+            }
+            stopCurrentStream();
+          };
+        }
+
+        previewVideo.muted = true;
+        previewVideo.srcObject = stream;
+
+        await new Promise((resolve) => {
+          if (previewVideo.readyState >= 1) {
+            resolve();
+          } else {
+            previewVideo.onloadedmetadata = () => resolve();
+          }
+        });
+
+        await previewVideo.play().catch(() => {});
+
+        // UI切り替え
+        hideAlert();
+        emptyState.classList.add('hidden');
+        mediaWrapper.classList.remove('hidden');
+        btnStopShare.classList.remove('hidden');
+        sourceResContainer.classList.remove('hidden');
+        sourceResContainer.classList.add('flex');
+        aspectToolbar.classList.remove('opacity-50', 'pointer-events-none');
+        btnStartRec.disabled = false;
+        btnSelectScreenLabel.textContent = '画面を変更する';
+
+        // 初回は中央に使いやすいサイズでクロップ枠を配置
+        state.crop = { x: 0.15, y: 0.15, w: 0.70, h: 0.70 };
+        setAspectRatio('free', false);
+        layoutMediaWrapper();
+        updateStepIndicator(2);
+
+        showToast(
+          isDemo
+            ? 'デモ映像を読み込みました（完全無音モード）'
+            : '画面を取得しました（音声トラック0・完全無音）',
+          'success'
+        );
+      }
+
+      /**
+       * ブラウザの画面選択ダイアログを起動（audio: false 固定）
+       */
+      async function requestScreenCapture() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+          showAlert(
+            'お使いのブラウザは画面キャプチャに対応していません',
+            'PC版の Google Chrome、Microsoft Edge、Firefox、Safari などの最新ブラウザをご利用ください。下のボタンからデモ映像で動作確認を行うこともできます。'
+          );
+          return;
+        }
+
+        try {
+          const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: {
+              frameRate: { ideal: 60 },
+            },
+            audio: false, // 音声は一切取得しない
+          });
+
+          // 既存ストリームがあれば入れ替え
+          if (state.mediaStream) {
+            stopCurrentStream();
+          }
+
+          await attachStreamToPreview(stream, false);
+        } catch (err) {
+          if (err && err.name === 'NotAllowedError') {
+            showAlert(
+              '画面の選択がキャンセルされたか、権限が許可されませんでした',
+              '録画したいウィンドウや画面を選択して「共有」を押してください。プレビュー環境（iframe内）で制限されている場合は、下のデモ映像ボタンから機能をお試しいただけます。'
+            );
+          } else {
+            showAlert(
+              '画面キャプチャを開始できませんでした',
+              `ブラウザ環境またはセキュリティ制限により画面取得がブロックされました（${err?.name || 'Error'}）。新しいタブで開くか、下のデモ映像で動作をお試しください。`
+            );
+          }
+        }
+      }
+
+      /**
+       * デモ用アニメーションゲーム画面ストリームを生成（環境制限時のテスト用）
+       */
+      async function startDemoGameStream() {
+        if (state.mediaStream) {
+          stopCurrentStream();
+        }
+
+        const ctx = demoSourceCanvas.getContext('2d');
+        const W = demoSourceCanvas.width;
+        const H = demoSourceCanvas.height;
+        let frame = 0;
+
+        // サンプルのゲーム内キャラクター・弾幕・UI要素
+        const orbs = Array.from({ length: 14 }, (_, i) => ({
+          x: (W * (i + 1)) / 15,
+          y: H * 0.45,
+          r: 14 + (i % 4) * 6,
+          speed: 1.5 + (i % 5) * 0.7,
+          phase: i * 0.6,
+          hue: (i * 28) % 360,
+        }));
+
+        function renderDemoFrame() {
+          frame++;
+          // 背景グラデーション
+          const bgGrad = ctx.createLinearGradient(0, 0, W, H);
+          bgGrad.addColorStop(0, '#0b1021');
+          bgGrad.addColorStop(1, '#161b33');
+          ctx.fillStyle = bgGrad;
+          ctx.fillRect(0, 0, W, H);
+
+          // グリッド床
+          ctx.strokeStyle = 'rgba(16, 185, 129, 0.14)';
+          ctx.lineWidth = 1;
+          const offset = (frame * 2) % 48;
+          for (let x = offset; x < W; x += 48) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, H);
+            ctx.stroke();
+          }
+          for (let y = offset; y < H; y += 48) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(W, y);
+            ctx.stroke();
+          }
+
+          // 動くターゲットオブジェクト
+          orbs.forEach((orb) => {
+            const cx = ((orb.x + frame * orb.speed) % (W + 80)) - 40;
+            const cy = orb.y + Math.sin(frame * 0.04 + orb.phase) * 140;
+
+            ctx.beginPath();
+            ctx.arc(cx, cy, orb.r, 0, Math.PI * 2);
+            ctx.fillStyle = `hsla(${orb.hue}, 85%, 60%, 0.85)`;
+            ctx.fill();
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+          });
+
+          // ゲーム風HUD表示（一部切り抜きテストに最適）
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
+          ctx.fillRect(28, 24, 310, 74);
+          ctx.strokeStyle = '#10b981';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(28, 24, 310, 74);
+
+          ctx.fillStyle = '#10b981';
+          ctx.font = 'bold 16px monospace';
+          ctx.fillText('DEMO GAME WINDOW (1280x720)', 44, 52);
+          ctx.fillStyle = '#f8fafc';
+          ctx.font = 'bold 20px monospace';
+          ctx.fillText(`SCORE: ${String(frame * 125).padStart(8, '0')}`, 44, 82);
+
+          // 中央ガイドテキスト
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+          ctx.font = '600 22px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('緑の枠をドラッグして録画したい範囲だけを切り抜けます', W / 2, H - 48);
+          ctx.textAlign = 'left';
+
+          state.demoAnimId = requestAnimationFrame(renderDemoFrame);
+        }
+
+        renderDemoFrame();
+        const stream = demoSourceCanvas.captureStream(60);
+        await attachStreamToPreview(stream, true);
+      }
+
+      // ==========================================
+      // 5. プレビュー表示サイズ計算 & クロップ座標管理
+      // ==========================================
+
+      /**
+       * コンテナ内に映像のアスペクト比を保ったままピッタリ収まるサイズを計算し反映
+       */
+      function layoutMediaWrapper() {
+        const vw = previewVideo.videoWidth;
+        const vh = previewVideo.videoHeight;
+        if (!vw || !vh) return;
+
+        sourceResText.textContent = `${vw} × ${vh} px`;
+
+        const stageRect = stageContainer.getBoundingClientRect();
+        const padX = window.innerWidth < 640 ? 24 : 40;
+        const padY = window.innerWidth < 640 ? 24 : 40;
+        const maxW = Math.max(200, stageRect.width - padX);
+        const maxH = Math.max(180, stageRect.height - padY);
+
+        const videoRatio = vw / vh;
+        let renderW = maxW;
+        let renderH = renderW / videoRatio;
+
+        if (renderH > maxH) {
+          renderH = maxH;
+          renderW = renderH * videoRatio;
+        }
+
+        mediaWrapper.style.width = `${Math.round(renderW)}px`;
+        mediaWrapper.style.height = `${Math.round(renderH)}px`;
+
+        syncCropBoxUI();
+      }
+
+      /**
+       * 正規化クロップ座標から実際の出力ピクセル数（偶数丸め）を算出
+       */
+      function getOutputPixelRect() {
+        const vw = previewVideo.videoWidth || 1280;
+        const vh = previewVideo.videoHeight || 720;
+
+        const sx = Math.max(0, Math.round(state.crop.x * vw));
+        const sy = Math.max(0, Math.round(state.crop.y * vh));
+        const rawW = Math.round(state.crop.w * vw);
+        const rawH = Math.round(state.crop.h * vh);
+
+        // エンコーダ互換性のため幅・高さを必ず偶数に丸める
+        const outW = Math.max(2, Math.min(vw, Math.floor(rawW / 2) * 2));
+        const outH = Math.max(2, Math.min(vh, Math.floor(rawH / 2) * 2));
+
+        // ソース切り出し領域が映像端を超えないよう調整
+        const safeSx = Math.min(sx, Math.max(0, vw - outW));
+        const safeSy = Math.min(sy, Math.max(0, vh - outH));
+
+        return {
+          sx: safeSx,
+          sy: safeSy,
+          sw: outW,
+          sh: outH,
+          outW,
+          outH,
+        };
+      }
+
+      /**
+       * クロップ枠のCSS位置と解像度バッジを同期
+       */
+      function syncCropBoxUI() {
+        const { x, y, w, h } = state.crop;
+        cropBox.style.left = `${x * 100}%`;
+        cropBox.style.top = `${y * 100}%`;
+        cropBox.style.width = `${w * 100}%`;
+        cropBox.style.height = `${h * 100}%`;
+
+        if (previewVideo.videoWidth && previewVideo.videoHeight) {
+          const { outW, outH } = getOutputPixelRect();
+          outputResBadge.textContent = `${outW} × ${outH} px`;
+          cropTag.textContent = state.isRecording
+            ? `● 録画中 ${outW}×${outH}`
+            : `${outW} × ${outH} px`;
+        }
+      }
+
+      /**
+       * 数値アスペクト比を取得（元映像の縦横比に対する正規化比率へ変換）
+       */
+      function getNormalizedAspectRatio() {
+        if (state.aspectRatio === 'free') return null;
+        const vw = previewVideo.videoWidth || 16;
+        const vh = previewVideo.videoHeight || 9;
+        const parts = state.aspectRatio.split(':').map(Number);
+        if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+        const targetPixelRatio = parts[0] / parts[1];
+        // normW * vw / (normH * vh) = targetPixelRatio  =>  normW / normH = targetPixelRatio * (vh / vw)
+        return targetPixelRatio * (vh / vw);
+      }
+
+      /**
+       * アスペクト比プリセットを適用し、現在の中心を維持して枠を調整
+       */
+      function setAspectRatio(ratioKey, adjustBox = true) {
+        if (state.isRecording) {
+          showToast('録画中は比率を変更できません', 'info');
+          return;
+        }
+
+        state.aspectRatio = ratioKey;
+        ratioButtons.forEach((btn) => {
+          const isMatch = btn.dataset.ratio === ratioKey;
+          btn.className = isMatch
+            ? 'ratio-btn active px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 transition cursor-pointer'
+            : 'ratio-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-[#181b24] hover:bg-[#222634] text-slate-300 border border-[#2a2f3d] transition cursor-pointer';
+        });
+
+        if (!adjustBox || ratioKey === 'free') {
+          syncCropBoxUI();
+          return;
+        }
+
+        const normRatio = getNormalizedAspectRatio();
+        if (!normRatio) return;
+
+        const cx = state.crop.x + state.crop.w / 2;
+        const cy = state.crop.y + state.crop.h / 2;
+
+        let newW = state.crop.w;
+        let newH = newW / normRatio;
+
+        if (newH > 0.92) {
+          newH = 0.92;
+          newW = newH * normRatio;
+        }
+        if (newW > 0.92) {
+          newW = 0.92;
+          newH = newW / normRatio;
+        }
+
+        let newX = cx - newW / 2;
+        let newY = cy - newH / 2;
+        newX = Math.max(0, Math.min(1 - newW, newX));
+        newY = Math.max(0, Math.min(1 - newH, newY));
+
+        state.crop = { x: newX, y: newY, w: newW, h: newH };
+        syncCropBoxUI();
+      }
+
+      // ==========================================
+      // 6. インタラクティブ範囲ドラッグ＆リサイズ操作
+      // ==========================================
+      let dragSession = null;
+
+      function getNormalizedPointerPos(clientX, clientY) {
+        const rect = mediaWrapper.getBoundingClientRect();
+        const nx = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        const ny = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+        return { nx, ny };
+      }
+
+      mediaWrapper.addEventListener('pointerdown', (e) => {
+        if (!state.mediaStream) return;
+        // カウントダウン中やボタン操作は無視
+        if (state.countdownTimerId) return;
+
+        const handleEl = e.target.closest('.resize-handle');
+        const insideCrop = e.target.closest('#cropBox');
+        const { nx, ny } = getNormalizedPointerPos(e.clientX, e.clientY);
+
+        if (handleEl && !state.isRecording) {
+          // 8方向リサイズ開始
+          e.preventDefault();
+          dragSession = {
+            mode: 'resize',
+            handle: handleEl.dataset.handle,
+            startNx: nx,
+            startNy: ny,
+            origCrop: { ...state.crop },
+          };
+          cropBox.classList.add('is-interacting');
+          mediaWrapper.setPointerCapture(e.pointerId);
+        } else if (insideCrop) {
+          // 枠内ドラッグ移動開始（録画中でもパン移動可能）
+          e.preventDefault();
+          dragSession = {
+            mode: 'move',
+            startNx: nx,
+            startNy: ny,
+            origCrop: { ...state.crop },
+          };
+          cropBox.classList.add('is-interacting');
+          mediaWrapper.setPointerCapture(e.pointerId);
+        } else if (!state.isRecording) {
+          // 暗転エリアから新規範囲をドラッグ作成
+          e.preventDefault();
+          dragSession = {
+            mode: 'draw',
+            startNx: nx,
+            startNy: ny,
+          };
+          cropBox.classList.add('is-interacting');
+          mediaWrapper.setPointerCapture(e.pointerId);
+        }
+      });
+
+      mediaWrapper.addEventListener('pointermove', (e) => {
+        if (!dragSession) return;
+        const { nx, ny } = getNormalizedPointerPos(e.clientX, e.clientY);
+        const minSize = 0.04; // 最小4%
+
+        if (dragSession.mode === 'move') {
+          const dx = nx - dragSession.startNx;
+          const dy = ny - dragSession.startNy;
+          const newX = Math.max(0, Math.min(1 - dragSession.origCrop.w, dragSession.origCrop.x + dx));
+          const newY = Math.max(0, Math.min(1 - dragSession.origCrop.h, dragSession.origCrop.y + dy));
+          state.crop.x = newX;
+          state.crop.y = newY;
+          syncCropBoxUI();
+          return;
+        }
+
+        if (dragSession.mode === 'draw') {
+          const normRatio = getNormalizedAspectRatio();
+          let x1 = dragSession.startNx;
+          let y1 = dragSession.startNy;
+          let x2 = nx;
+          let y2 = ny;
+
+          let w = Math.abs(x2 - x1);
+          let h = Math.abs(y2 - y1);
+
+          if (normRatio) {
+            h = w / normRatio;
+            const dirY = y2 >= y1 ? 1 : -1;
+            y2 = y1 + dirY * h;
+            if (y2 < 0) {
+              y2 = 0;
+              h = y1;
+              w = h * normRatio;
+              x2 = x1 + (x2 >= x1 ? 1 : -1) * w;
+            } else if (y2 > 1) {
+              y2 = 1;
+              h = 1 - y1;
+              w = h * normRatio;
+              x2 = x1 + (x2 >= x1 ? 1 : -1) * w;
+            }
+          }
+
+          const left = Math.max(0, Math.min(x1, x2));
+          const top = Math.max(0, Math.min(y1, y2));
+          const width = Math.max(minSize, Math.min(1 - left, Math.abs(x2 - x1)));
+          const height = Math.max(minSize, Math.min(1 - top, Math.abs(y2 - y1)));
+
+          state.crop = { x: left, y: top, w: width, h: height };
+          syncCropBoxUI();
+          return;
+        }
+
+        if (dragSession.mode === 'resize') {
+          const orig = dragSession.origCrop;
+          const hType = dragSession.handle;
+          let left = orig.x;
+          let top = orig.y;
+          let right = orig.x + orig.w;
+          let bottom = orig.y + orig.h;
+
+          if (hType.includes('w')) left = Math.min(nx, right - minSize);
+          if (hType.includes('e')) right = Math.max(nx, left + minSize);
+          if (hType.includes('n')) top = Math.min(ny, bottom - minSize);
+          if (hType.includes('s')) bottom = Math.max(ny, top + minSize);
+
+          let newW = right - left;
+          let newH = bottom - top;
+
+          const normRatio = getNormalizedAspectRatio();
+          if (normRatio) {
+            if (hType === 'n' || hType === 's') {
+              newW = newH * normRatio;
+              const center = (left + right) / 2;
+              left = Math.max(0, Math.min(1 - newW, center - newW / 2));
+              right = left + newW;
+            } else {
+              newH = newW / normRatio;
+              if (hType.includes('n')) {
+                top = Math.max(0, bottom - newH);
+                newH = bottom - top;
+                newW = newH * normRatio;
+                if (hType.includes('w')) left = right - newW;
+              } else {
+                bottom = Math.min(1, top + newH);
+                newH = bottom - top;
+                newW = newH * normRatio;
+                if (hType.includes('w')) left = right - newW;
+              }
+            }
+          }
+
+          state.crop = {
+            x: Math.max(0, left),
+            y: Math.max(0, top),
+            w: Math.max(minSize, Math.min(1 - Math.max(0, left), newW)),
+            h: Math.max(minSize, Math.min(1 - Math.max(0, top), newH)),
+          };
+          syncCropBoxUI();
+        }
+      });
+
+      function endDragSession(e) {
+        if (!dragSession) return;
+        cropBox.classList.remove('is-interacting');
+        try {
+          mediaWrapper.releasePointerCapture(e.pointerId);
+        } catch (_) {}
+        dragSession = null;
+      }
+
+      mediaWrapper.addEventListener('pointerup', endDragSession);
+      mediaWrapper.addEventListener('pointercancel', endDragSession);
+
+      // ==========================================
+      // 7. 完全無音録画エンジン (Canvas -> MediaRecorder)
+      // ==========================================
+
+      function cancelCountdown() {
+        if (state.countdownTimerId) {
+          clearInterval(state.countdownTimerId);
+          state.countdownTimerId = null;
+        }
+        countdownOverlay.classList.add('hidden');
+      }
+
+      /**
+       * カウントダウン確認後に録画を開始
+       */
+      function handleStartRecordingClick() {
+        if (!state.mediaStream || state.isRecording || state.countdownTimerId) return;
+
+        const delaySec = parseInt(selectCountdown.value, 10) || 0;
+        if (delaySec <= 0) {
+          beginSilentRecording();
+          return;
+        }
+
+        // 視覚のみの無音カウントダウン（音は一切鳴らない）
+        let remaining = delaySec;
+        countdownNumber.textContent = String(remaining);
+        countdownOverlay.classList.remove('hidden');
+
+        state.countdownTimerId = setInterval(() => {
+          remaining -= 1;
+          if (remaining <= 0) {
+            cancelCountdown();
+            beginSilentRecording();
+          } else {
+            countdownNumber.textContent = String(remaining);
+          }
+        }, 1000);
+      }
+
+      /**
+       * オフスクリーンCanvasで選択範囲だけを切り出し、音声0トラックで録画開始
+       */
+      function beginSilentRecording() {
+        if (!state.mediaStream || state.isRecording) return;
+
+        const fps = parseInt(selectFps.value, 10) || 60;
+        const quality = selectQuality.value;
+        const videoBitsPerSecond = quality === 'high' ? 10_000_000 : 4_500_000;
+
+        // 録画開始時の出力解像度を固定（偶数保証）
+        const initialRect = getOutputPixelRect();
+        state.lockedOutW = initialRect.outW;
+        state.lockedOutH = initialRect.outH;
+
+        recordCanvas.width = state.lockedOutW;
+        recordCanvas.height = state.lockedOutH;
+
+        // 初回フレームを即時描画
+        recordCtx.drawImage(
+          previewVideo,
+          initialRect.sx,
+          initialRect.sy,
+          initialRect.sw,
+          initialRect.sh,
+          0,
+          0,
+          state.lockedOutW,
+          state.lockedOutH
+        );
+
+        // 選択したFPSに合わせてフレームを転送
+        const frameIntervalMs = 1000 / fps;
+        let lastDrawTime = performance.now();
+
+        function pumpFrame(now) {
+          if (!state.isRecording) return;
+          state.drawLoopId = requestAnimationFrame(pumpFrame);
+
+          if (state.isPaused) return;
+          if (now - lastDrawTime < frameIntervalMs * 0.92) return;
+          lastDrawTime = now;
+
+          const rect = getOutputPixelRect();
+          recordCtx.drawImage(
+            previewVideo,
+            rect.sx,
+            rect.sy,
+            rect.sw,
+            rect.sh,
+            0,
+            0,
+            state.lockedOutW,
+            state.lockedOutH
+          );
+        }
+
+        // Canvasから映像のみのストリームを生成（音声トラックは構造上0本）
+        const canvasStream = recordCanvas.captureStream(fps);
+        canvasStream.getAudioTracks().forEach((t) => {
+          t.stop();
+          canvasStream.removeTrack(t);
+        });
+
+        const options = { videoBitsPerSecond };
+        if (bestFormat.mime) {
+          options.mimeType = bestFormat.mime;
+        }
+
+        try {
+          state.mediaRecorder = new MediaRecorder(canvasStream, options);
+        } catch (_) {
+          // フォールバック
+          state.mediaRecorder = new MediaRecorder(canvasStream);
+        }
+
+        state.recordedChunks = [];
+        const usedMime = state.mediaRecorder.mimeType || bestFormat.mime || 'video/webm';
+        const usedExt = usedMime.includes('mp4') ? 'mp4' : 'webm';
+        const recordedResolution = `${state.lockedOutW} × ${state.lockedOutH} px`;
+        const recordedFps = fps;
+
+        state.mediaRecorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) {
+            state.recordedChunks.push(event.data);
+          }
+        };
+
+        state.mediaRecorder.onstop = () => {
+          const totalDurationSec = state.recAccumulatedMs / 1000;
+          const blob = new Blob(state.recordedChunks, { type: usedMime });
+          state.recordedChunks = [];
+
+          // キャンバスストリームのトラックを解放
+          canvasStream.getTracks().forEach((t) => t.stop());
+
+          if (blob.size > 0) {
+            addRecordedClip({
+              blob,
+              ext: usedExt,
+              mime: usedMime,
+              resolution: recordedResolution,
+              fps: recordedFps,
+              durationSec: totalDurationSec,
+            });
+          }
+        };
+
+        // 録画開始
+        state.isRecording = true;
+        state.isPaused = false;
+        state.recAccumulatedMs = 0;
+        state.recStartTime = performance.now();
+
+        state.mediaRecorder.start(250);
+        state.drawLoopId = requestAnimationFrame(pumpFrame);
+
+        // バックグラウンドタブ時も一定間隔で描画を継続する補助タイマー
+        state.fallbackIntervalId = setInterval(() => {
+          if (!state.isRecording || state.isPaused || !document.hidden) return;
+          const rect = getOutputPixelRect();
+          recordCtx.drawImage(
+            previewVideo,
+            rect.sx,
+            rect.sy,
+            rect.sw,
+            rect.sh,
+            0,
+            0,
+            state.lockedOutW,
+            state.lockedOutH
+          );
+        }, frameIntervalMs);
+
+        // 経過時間タイマー更新
+        recTimer.textContent = '00:00';
+        state.timerIntervalId = setInterval(() => {
+          if (!state.isRecording || state.isPaused) return;
+          const currentTotalMs = state.recAccumulatedMs + (performance.now() - state.recStartTime);
+          recTimer.textContent = formatDuration(currentTotalMs / 1000);
+        }, 250);
+
+        // UIを録画中状態に更新
+        updateRecordingUI(true, false);
+        updateStepIndicator(3);
+      }
+
+      /**
+       * 一時停止 / 再開切り替え
+       */
+      function togglePauseRecording() {
+        if (!state.isRecording || !state.mediaRecorder) return;
+
+        if (!state.isPaused) {
+          state.isPaused = true;
+          state.recAccumulatedMs += performance.now() - state.recStartTime;
+          if (state.mediaRecorder.state === 'recording') {
+            state.mediaRecorder.pause();
+          }
+          updateRecordingUI(true, true);
+        } else {
+          state.isPaused = false;
+          state.recStartTime = performance.now();
+          if (state.mediaRecorder.state === 'paused') {
+            state.mediaRecorder.resume();
+          }
+          updateRecordingUI(true, false);
+        }
+      }
+
+      /**
+       * 録画停止
+       */
+      function stopRecording() {
+        if (!state.isRecording) return;
+
+        if (!state.isPaused) {
+          state.recAccumulatedMs += performance.now() - state.recStartTime;
+        }
+
+        state.isRecording = false;
+        state.isPaused = false;
+
+        if (state.drawLoopId) {
+          cancelAnimationFrame(state.drawLoopId);
+          state.drawLoopId = null;
+        }
+        if (state.fallbackIntervalId) {
+          clearInterval(state.fallbackIntervalId);
+          state.fallbackIntervalId = null;
+        }
+        if (state.timerIntervalId) {
+          clearInterval(state.timerIntervalId);
+          state.timerIntervalId = null;
+        }
+
+        if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
+          state.mediaRecorder.stop();
+        }
+
+        updateRecordingUI(false, false);
+        updateStepIndicator(state.mediaStream ? 2 : 1);
+      }
+
+      /**
+       * 録画中/待機中のUIボタン・バッジ表示切り替え
+       */
+      function updateRecordingUI(recording, paused) {
+        if (recording) {
+          cropBox.classList.add('is-recording');
+          cropTag.classList.remove('bg-emerald-500', 'text-slate-950');
+          cropTag.classList.add('bg-red-500', 'text-white');
+
+          btnStartRec.classList.add('hidden');
+          btnPauseRec.classList.remove('hidden');
+          btnStopRec.classList.remove('hidden');
+
+          recordingStatusPill.classList.remove('hidden');
+          recordingStatusPill.classList.add('inline-flex');
+
+          aspectToolbar.classList.add('opacity-50', 'pointer-events-none');
+          selectFps.disabled = true;
+          selectCountdown.disabled = true;
+          selectQuality.disabled = true;
+
+          if (paused) {
+            recDot.classList.remove('animate-rec-dot', 'bg-red-500');
+            recDot.classList.add('bg-amber-400');
+            recStateLabel.textContent = '一時停止中';
+            btnPauseIcon.textContent = '▶';
+            btnPauseText.textContent = '再開';
+          } else {
+            recDot.classList.add('animate-rec-dot', 'bg-red-500');
+            recDot.classList.remove('bg-amber-400');
+            recStateLabel.textContent = '無音録画中';
+            btnPauseIcon.textContent = '❚❚';
+            btnPauseText.textContent = '一時停止';
+          }
+        } else {
+          cropBox.classList.remove('is-recording');
+          cropTag.classList.add('bg-emerald-500', 'text-slate-950');
+          cropTag.classList.remove('bg-red-500', 'text-white');
+
+          btnStartRec.classList.remove('hidden');
+          btnPauseRec.classList.add('hidden');
+          btnStopRec.classList.add('hidden');
+
+          recordingStatusPill.classList.add('hidden');
+          recordingStatusPill.classList.remove('inline-flex');
+
+          if (state.mediaStream) {
+            aspectToolbar.classList.remove('opacity-50', 'pointer-events-none');
+          }
+          selectFps.disabled = false;
+          selectCountdown.disabled = false;
+          selectQuality.disabled = false;
+        }
+        syncCropBoxUI();
+      }
+
+      // ==========================================
+      // 8. 録画済みクリップのプレビュー＆ダウンロード管理
+      // ==========================================
+
+      function addRecordedClip({ blob, ext, mime, resolution, fps, durationSec }) {
+        const id = `clip_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const url = URL.createObjectURL(blob);
+        const filename = generateTimestampFilename(ext);
+
+        const clip = {
+          id,
+          url,
+          blob,
+          ext,
+          mime,
+          filename,
+          resolution,
+          fps,
+          durationText: formatDuration(durationSec),
+          sizeText: formatBytes(blob.size),
+        };
+
+        state.clips.unshift(clip);
+        renderClipsGallery();
+        showToast('完全無音クリップを作成しました！', 'success');
+      }
+
+      function removeClip(clipId) {
+        const index = state.clips.findIndex((c) => c.id === clipId);
+        if (index === -1) return;
+        const [removed] = state.clips.splice(index, 1);
+        URL.revokeObjectURL(removed.url);
+        renderClipsGallery();
+        showToast('クリップを削除しました', 'info');
+      }
+
+      function triggerDownload(clip) {
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = clip.url;
+        // 拡張子が消えていた場合は自動補完
+        let cleanName = (clip.filename || '').trim() || generateTimestampFilename(clip.ext);
+        if (!cleanName.toLowerCase().endsWith(`.${clip.ext}`)) {
+          cleanName = `${cleanName}.${clip.ext}`;
+        }
+        a.download = cleanName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => a.remove(), 150);
+        showToast(`「${cleanName}」をダウンロードしました（完全無音）`, 'success');
+      }
+
+      function renderClipsGallery() {
+        clipCountBadge.textContent = String(state.clips.length);
+
+        if (state.clips.length === 0) {
+          clipsEmptyState.classList.remove('hidden');
+          clipsGrid.classList.add('hidden');
+          clipsGrid.innerHTML = '';
+          return;
+        }
+
+        clipsEmptyState.classList.add('hidden');
+        clipsGrid.classList.remove('hidden');
+        clipsGrid.innerHTML = '';
+
+        state.clips.forEach((clip) => {
+          const card = document.createElement('article');
+          card.className = 'rounded-xl bg-[#0f1117] border border-[#2a2f3d] overflow-hidden flex flex-col justify-between shadow-md';
+
+          card.innerHTML = `
+            <div>
+              <!-- 無音プレビュープレーヤー -->
+              <div class="relative bg-black aspect-video flex items-center justify-center overflow-hidden border-b border-[#2a2f3d]">
+                <video src="${clip.url}" controls muted playsinline preload="metadata" class="w-full h-full object-contain"></video>
+                <span class="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md bg-emerald-500/90 text-slate-950 text-[11px] font-bold shadow pointer-events-none">
+                  🔇 完全無音 (0ch)
+                </span>
+              </div>
+
+              <!-- メタデータ＆ファイル名編集 -->
+              <div class="p-3.5 space-y-2.5">
+                <div class="flex flex-wrap items-center gap-1.5 text-[11px] font-mono">
+                  <span class="px-2 py-0.5 rounded bg-[#181b24] border border-[#2a2f3d] text-emerald-400 font-semibold">${clip.resolution}</span>
+                  <span class="px-2 py-0.5 rounded bg-[#181b24] border border-[#2a2f3d] text-slate-300">${clip.fps} FPS</span>
+                  <span class="px-2 py-0.5 rounded bg-[#181b24] border border-[#2a2f3d] text-slate-300">${clip.durationText}</span>
+                  <span class="px-2 py-0.5 rounded bg-[#181b24] border border-[#2a2f3d] text-slate-300">${clip.sizeText}</span>
+                  <span class="px-2 py-0.5 rounded bg-[#181b24] border border-[#2a2f3d] text-slate-400 uppercase">${clip.ext}</span>
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <label class="text-xs text-slate-400 shrink-0">保存名:</label>
+                  <input type="text" value="${clip.filename}" aria-label="保存ファイル名"
+                    class="clip-filename-input w-full px-2.5 py-1 rounded-lg bg-[#181b24] border border-[#2a2f3d] text-xs font-mono text-slate-200 focus:outline-none focus:border-emerald-500" />
+                </div>
+              </div>
+            </div>
+
+            <!-- ダウンロード＆削除ボタン -->
+            <div class="px-3.5 pb-3.5 pt-1 flex items-center gap-2">
+              <button type="button" class="btn-download-clip flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-[0.99] text-slate-950 font-bold text-xs sm:text-sm shadow-md shadow-emerald-500/15 transition cursor-pointer">
+                <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2.3" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <span>動画をダウンロード</span>
+              </button>
+              <button type="button" title="クリップを削除" class="btn-delete-clip px-3 py-2 rounded-xl bg-[#181b24] hover:bg-red-500/20 border border-[#2a2f3d] hover:border-red-500/40 text-slate-400 hover:text-red-300 text-xs font-medium transition cursor-pointer">
+                削除
+              </button>
+            </div>
+          `;
+
+          // イベントバインド
+          const nameInput = card.querySelector('.clip-filename-input');
+          nameInput.addEventListener('input', (e) => {
+            clip.filename = e.target.value;
+          });
+
+          card.querySelector('.btn-download-clip').addEventListener('click', () => {
+            triggerDownload(clip);
+          });
+
+          card.querySelector('.btn-delete-clip').addEventListener('click', () => {
+            removeClip(clip.id);
+          });
+
+          clipsGrid.appendChild(card);
+        });
+      }
+
+      // ==========================================
+      // 9. イベントリスナー登録
+      // ==========================================
+      btnSelectScreen.addEventListener('click', requestScreenCapture);
+      btnStopShare.addEventListener('click', stopCurrentStream);
+      btnDemoQuickStart.addEventListener('click', startDemoGameStream);
+      btnDemoFallback.addEventListener('click', startDemoGameStream);
+      btnDismissAlert.addEventListener('click', hideAlert);
+
+      ratioButtons.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          setAspectRatio(btn.dataset.ratio, true);
+        });
+      });
+
+      btnResetCrop.addEventListener('click', () => {
+        if (state.isRecording) {
+          showToast('録画中は範囲サイズを変更できません', 'info');
+          return;
+        }
+        state.crop = { x: 0, y: 0, w: 1, h: 1 };
+        setAspectRatio('free', false);
+        showToast('録画範囲を画面全体に戻しました', 'info');
+      });
+
+      btnStartRec.addEventListener('click', handleStartRecordingClick);
+      btnCancelCountdown.addEventListener('click', cancelCountdown);
+      btnPauseRec.addEventListener('click', togglePauseRecording);
+      btnStopRec.addEventListener('click', stopRecording);
+
+      // ウィンドウリサイズ時にプレビュー枠を自動再計算
+      window.addEventListener('resize', () => {
+        if (state.mediaStream) {
+          layoutMediaWrapper();
+        }
+      });
+
+      if (typeof ResizeObserver !== 'undefined') {
+        const ro = new ResizeObserver(() => {
+          if (state.mediaStream) {
+            layoutMediaWrapper();
+          }
+        });
+        ro.observe(stageContainer);
+      }
+    })();
+  </script>
 </body>
 </html>
